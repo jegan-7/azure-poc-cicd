@@ -1,0 +1,27 @@
+# Terraform
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.backup
+terraform/**/.terraform.lock.hcl
+terraform/**/*.tfplan
+terraform/**/plan_output.txt
+terraform/**/terraform.tfvars
+
+# Node.js
+app/node_modules/
+app/package-lock.json
+
+# Docker
+image.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.*
