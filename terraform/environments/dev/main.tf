@@ -112,6 +112,7 @@ module "container_apps" {
   min_replicas         = var.min_replicas
   max_replicas         = var.max_replicas
   key_vault_id         = module.keyvault.id
+  key_vault_uri        = module.keyvault.key_vault_uri 
   acr_id               = module.acr.id
   tags                 = local.common_tags
 }

@@ -60,17 +60,24 @@ resource "azurerm_container_app" "poc" {
       image  = "mcr.microsoft.com/k8se/quickstart:latest"
       cpu    = var.container_app_cpu
       memory = var.container_app_memory
+
+      env {
+        name  = "KEY_VAULT_URI"
+        value = var.key_vault_uri
+      }
+
+      env {
+        name  = "NODE_ENV"
+        value = var.environment
+      }
     }
   }
 
   tags = var.tags
 
-  # Terraform provisions the initial container app with quickstart image.
-  # CI/CD pipeline owns the image deployment — ignore to prevent revert.
   lifecycle {
     ignore_changes = [
       template[0].container[0].image,
-      template[0].container[0].env,
       registry
     ]
   }

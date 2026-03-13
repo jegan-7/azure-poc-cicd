@@ -54,3 +54,8 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "key_vault_uri" {
+  description = "URI of the Azure Key Vault"
+  type        = string
+}

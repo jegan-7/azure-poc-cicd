@@ -2,7 +2,7 @@ output "id" {
   value = azurerm_key_vault.poc-vault.id
 }
 
-output "vault_uri" {
+output "key_vault_uri" {
   value = azurerm_key_vault.poc-vault.vault_uri
 }
 
