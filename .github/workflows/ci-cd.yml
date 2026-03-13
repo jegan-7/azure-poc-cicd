@@ -99,7 +99,7 @@ jobs:
 
       # ── Deploy ─────────────────────────────────────────────────────────
       - name: 🚀 Deploy to Container App
-        uses: azure/container-apps-deploy@v1
+        uses: azure/container-apps-deploy@v2
         with:
           resourceGroup: ${{ secrets.RESOURCE_GROUP }}
           containerAppName: ${{ secrets.CONTAINER_APP_NAME }}
