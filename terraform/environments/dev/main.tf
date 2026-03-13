@@ -91,7 +91,7 @@ module "keyvault" {
   location            = data.azurerm_resource_group.main.location
   resource_suffix     = local.resource_suffix
   tenant_id           = data.azurerm_client_config.current.tenant_id
-  deployer_object_id  = data.azurerm_client_config.current.object_id
+  deployer_object_id  = var.deployer_object_id
   tags                = local.common_tags
 }
 

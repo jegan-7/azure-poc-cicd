@@ -13,7 +13,10 @@ variable "project_name" {
 }
 
 
-
+variable "deployer_object_id" {
+  description = "Object ID of the service principal that deploys resources"
+  type        = string
+}
 
 variable "acr_sku" {
   description = "ACR SKU"
