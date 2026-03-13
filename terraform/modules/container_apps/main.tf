@@ -64,8 +64,17 @@ resource "azurerm_container_app" "poc" {
   }
 
   tags = var.tags
-}
 
+  # Terraform provisions the initial container app with quickstart image.
+  # CI/CD pipeline owns the image deployment — ignore to prevent revert.
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+      template[0].container[0].env,
+      registry
+    ]
+  }
+}
 # ── RBAC: Container App → ACR (AcrPull) ───────────────────────────────────
 
 resource "azurerm_role_assignment" "app_acr_pull" {
