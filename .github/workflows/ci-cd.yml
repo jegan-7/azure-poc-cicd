@@ -98,12 +98,22 @@ jobs:
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
       # ── Deploy ─────────────────────────────────────────────────────────
+      - name: ⚙️ Configure Container App Registry
+        run: |
+          az containerapp registry set \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --identity system
+
       - name: 🚀 Deploy to Container App
-        uses: azure/container-apps-deploy@v2
-        with:
-          resourceGroup: ${{ secrets.RESOURCE_GROUP }}
-          containerAppName: ${{ secrets.CONTAINER_APP_NAME }}
-          imageToDeploy: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          az containerapp update \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --revision-suffix ${{ github.run_number }} \
+            --set-env-vars "REVISION=${{ github.sha }}"
 
       - name: ✅ Summary
         run: |
