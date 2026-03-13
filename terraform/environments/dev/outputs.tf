@@ -15,7 +15,7 @@ output "acr_name" {
 }
 
 output "key_vault_uri" {
-  value = module.keyvault.vault_uri
+  value = module.keyvault.key_vault_uri
 }
 
 output "key_vault_name" {
