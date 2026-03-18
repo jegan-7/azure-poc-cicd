@@ -78,6 +78,7 @@ resource "azurerm_container_app" "poc" {
   lifecycle {
     ignore_changes = [
       template[0].container[0].image,
+      template[0].container[0].env,
       registry
     ]
   }
