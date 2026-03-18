@@ -59,3 +59,15 @@ variable "key_vault_uri" {
   description = "URI of the Azure Key Vault"
   type        = string
 }
+
+
+variable "image_tag" {
+  description = "Image tag deployed by CI/CD pipeline"
+  type        = string
+  default     = "latest"
+}
+
+variable "acr_login_server" {
+  description = "ACR login server URL"
+  type        = string
+}

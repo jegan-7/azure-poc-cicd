@@ -52,12 +52,13 @@ resource "azurerm_container_app" "poc" {
   }
 
   template {
-    min_replicas = var.min_replicas
-    max_replicas = var.max_replicas
+    revision_suffix = "v${var.image_tag}"   # 👈 track revisions clearly
+    min_replicas    = var.min_replicas
+    max_replicas    = var.max_replicas
 
     container {
       name   = var.project_name
-      image  = "mcr.microsoft.com/k8se/quickstart:latest"
+      image  = "${var.acr_login_server}/${var.project_name}:${var.image_tag}"
       cpu    = var.container_app_cpu
       memory = var.container_app_memory
 
@@ -77,9 +78,7 @@ resource "azurerm_container_app" "poc" {
 
   lifecycle {
     ignore_changes = [
-      template[0].container[0].image,
-      template[0].container[0].env, 
-      registry
+       # CI/CD owns the image tag
     ]
   }
 }

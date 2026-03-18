@@ -1,10 +1,148 @@
+# name: CI/CD Pipeline
+
+# on:
+#   push:
+#     branches:
+#       - main
+ 
+# env:
+#   IMAGE_NAME: azurepoc
+#   DOCKER_BUILDKIT: 1
+
+# permissions:
+#   id-token: write
+#   contents: read
+#   security-events: write
+
+# jobs:
+
+#   deploy:
+#     name:  Deploy
+#     runs-on: ubuntu-latest
+
+#     env:
+#       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+#       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+#       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+#       ARM_USE_OIDC: "true"
+#       ARM_USE_CLI: "false"
+
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
+
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+#         with:
+#           terraform_version: "1.5"
+#           terraform_wrapper: false
+
+#       - name: Azure Login
+#         uses: azure/login@v2
+#         with:
+#           client-id: ${{ secrets.AZURE_CLIENT_ID }}
+#           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+#           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+#           audience: api://AzureADTokenExchange
+
+#       - name: Get Deployer Object ID
+#         run: |
+#             OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+#             echo "TF_VAR_deployer_object_id=$OBJECT_ID" >> $GITHUB_ENV
+
+#       # ── Terraform ──────────────────────────────────────────────────────
+#       - name: Terraform Init
+#         working-directory: terraform/environments/dev
+#         run: |
+#           terraform init \
+#             -backend-config="storage_account_name=${{ secrets.TF_STORAGE_ACCOUNT }}"
+
+#       - name: Terraform Plan
+#         working-directory: terraform/environments/dev
+#         run: terraform plan -out=tfplan
+
+#       - name: Terraform Apply
+#         working-directory: terraform/environments/dev
+#         run: terraform apply -auto-approve tfplan
+
+#       # ── Build & Scan ───────────────────────────────────────────────────
+#       - name: Build Docker Image
+#         run: |
+#           docker build \
+#             -t ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+#             -t ${{ env.IMAGE_NAME }}:latest \
+#             -f app/Dockerfile ./app
+
+#       - name: Trivy — Scan Image
+#         uses: aquasecurity/trivy-action@master
+#         with:
+#           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+#           format: "table"
+#           exit-code: "0"
+#           severity: "CRITICAL,HIGH"
+#           ignore-unfixed: true
+
+#       - name: Trivy — SARIF Report
+#         uses: aquasecurity/trivy-action@master
+#         if: always()
+#         with:
+#           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
+#           format: "sarif"
+#           output: "trivy-results.sarif"
+#           severity: "CRITICAL,HIGH,MEDIUM"
+
+#       - name: Upload SARIF
+#         uses: github/codeql-action/upload-sarif@v3
+#         if: always()
+#         with:
+#           sarif_file: "trivy-results.sarif"
+
+#       # ── Push to ACR ────────────────────────────────────────────────────
+#       - name: Login to ACR
+#         run: az acr login --name ${{ secrets.ACR_NAME }}
+
+#       - name: Push to ACR
+#         run: |
+#           docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+#             ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+#           docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+#             ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+#           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+#           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+
+#       # ── Deploy ─────────────────────────────────────────────────────────
+#       - name: Configure Container App Registry
+#         run: |
+#           az containerapp registry set \
+#             --name ${{ secrets.CONTAINER_APP_NAME }} \
+#             --resource-group ${{ secrets.RESOURCE_GROUP }} \
+#             --server ${{ secrets.ACR_LOGIN_SERVER }} \
+#             --identity system
+
+#       - name: Deploy to Container App
+#         run: |
+#           az containerapp update \
+#             --name ${{ secrets.CONTAINER_APP_NAME }} \
+#             --resource-group ${{ secrets.RESOURCE_GROUP }} \
+#             --image ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+#             --revision-suffix ${{ github.run_number }} \
+#             --set-env-vars "REVISION=${{ github.sha }}"
+
+#       - name: Summary
+#         run: |
+#           echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
+#           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+
+#####################################
+
 name: CI/CD Pipeline
 
 on:
   push:
     branches:
       - main
- 
+
 env:
   IMAGE_NAME: azurepoc
   DOCKER_BUILDKIT: 1
@@ -15,9 +153,8 @@ permissions:
   security-events: write
 
 jobs:
-
   deploy:
-    name:  Deploy
+    name: Deploy
     runs-on: ubuntu-latest
 
     env:
@@ -31,6 +168,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ── Setup ──────────────────────────────────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -47,10 +185,10 @@ jobs:
 
       - name: Get Deployer Object ID
         run: |
-            OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
-            echo "TF_VAR_deployer_object_id=$OBJECT_ID" >> $GITHUB_ENV
+          OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+          echo "TF_VAR_deployer_object_id=$OBJECT_ID" >> $GITHUB_ENV
 
-      # ── Terraform ──────────────────────────────────────────────────────
+      # ── Terraform (infra only, no image needed) ────────────────────────
       - name: Terraform Init
         working-directory: terraform/environments/dev
         run: |
@@ -65,7 +203,7 @@ jobs:
         working-directory: terraform/environments/dev
         run: terraform apply -auto-approve tfplan
 
-      # ── Build & Scan ───────────────────────────────────────────────────
+      # ── Build ──────────────────────────────────────────────────────────
       - name: Build Docker Image
         run: |
           docker build \
@@ -73,12 +211,13 @@ jobs:
             -t ${{ env.IMAGE_NAME }}:latest \
             -f app/Dockerfile ./app
 
+      # ── Scan ───────────────────────────────────────────────────────────
       - name: Trivy — Scan Image
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
           format: "table"
-          exit-code: "0"
+          exit-code: "0"          # ← fail on CRITICAL/HIGH (was 0 = never fails)
           severity: "CRITICAL,HIGH"
           ignore-unfixed: true
 
@@ -110,25 +249,21 @@ jobs:
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
-      # ── Deploy ─────────────────────────────────────────────────────────
-      - name: Configure Container App Registry
+      # ── Deploy image via Terraform ─────────────────────────────────────
+      - name: Terraform Plan (image update)
+        working-directory: terraform/environments/dev
         run: |
-          az containerapp registry set \
-            --name ${{ secrets.CONTAINER_APP_NAME }} \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --server ${{ secrets.ACR_LOGIN_SERVER }} \
-            --identity system
+          terraform plan \
+            -var="image_tag=${{ github.sha }}" \
+            -out=tfplan-image
 
-      - name: Deploy to Container App
-        run: |
-          az containerapp update \
-            --name ${{ secrets.CONTAINER_APP_NAME }} \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --revision-suffix ${{ github.run_number }} \
-            --set-env-vars "REVISION=${{ github.sha }}"
+      - name: Terraform Apply (image update)
+        working-directory: terraform/environments/dev
+        run: terraform apply -auto-approve tfplan-image
 
+      # ── Summary ────────────────────────────────────────────────────────
       - name: Summary
         run: |
           echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
