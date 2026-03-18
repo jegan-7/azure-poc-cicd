@@ -113,6 +113,7 @@ module "container_apps" {
   max_replicas         = var.max_replicas
   key_vault_id         = module.keyvault.id
   key_vault_uri        = module.keyvault.key_vault_uri 
+  revision_number      = var.revision_number
   acr_id               = module.acr.id
   acr_login_server     = module.acr.login_server   # 👈 add this
   image_tag            = var.image_tag     

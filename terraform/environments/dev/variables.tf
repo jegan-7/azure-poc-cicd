@@ -49,3 +49,9 @@ variable "image_tag" {
   type        = string
   default     = "latest"
 }
+
+variable "revision_number" {
+  description = "GitHub Actions run number used for revision naming"
+  type        = string
+  default     = "1"
+}
