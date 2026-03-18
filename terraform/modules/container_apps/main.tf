@@ -79,6 +79,8 @@ resource "azurerm_container_app" "poc" {
     ignore_changes = [
       template[0].container[0].image,
       template[0].container[0].env,
+      latest_revision_fqdn,        # ← add this
+      latest_revision_name,  
       registry
     ]
   }
