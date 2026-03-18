@@ -121,6 +121,55 @@ cd terraform/environments/uat  && terraform destroy
 cd terraform/environments/prd  && terraform destroy
 ```
 
+
+Azure state backend creation ############################
+step :1
+
+az storage account create \ 
+ --name $STORAGE_ACCOUNT_NAME \      
+ --resource-group rg-app-devops_Jegan \   
+ --location southindia \   
+ --sku Standard_LRS \   
+ --kind StorageV2 
+
+step :2
+
+assign RBAC for role  ##########  
+
+az role assignment create \
+  --assignee $(az ad signed-in-user show --query id -o tsv) \
+  --role "Storage Blob Data Contributor" \
+  --scope $(az storage account show \
+   --name $STORAGE_ACCOUNT_NAME \
+   --resource-group rg-app-devops_Jegan \
+   --query id -o tsv)
+   
+step :3 
+
+create container   #####################
+
+az storage container create \
+  --name tfstate \
+  --account-name $STORAGE_ACCOUNT_NAME \
+  --auth-mode login
+  
+ terraform backend remainder ################
+
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "rg-app-devops_Jegan"
+    storage_account_name = "sttfstatejegandev01"
+    container_name       = "tfstate"
+    key                  = "dev.tfstate"
+    use_azuread_auth     = true
+  }
+}
+
+
+
+
+
+
 oidc for azure with github ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
 step 1 - oidc creation :
