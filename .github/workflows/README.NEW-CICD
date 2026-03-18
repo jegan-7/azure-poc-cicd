@@ -1,0 +1,345 @@
+# Azure POC — CI/CD Pipeline
+
+A GitHub Actions CI/CD pipeline that builds, scans, and deploys a Node.js containerised application to **Azure Container Apps** using **Terraform** and **OIDC authentication** (no stored credentials).
+
+---
+
+## Architecture Overview
+
+```
+GitHub Actions
+      │
+      ├── OIDC → Azure (no secrets)
+      │
+      ├── Build Docker Image
+      ├── Scan with Trivy
+      ├── Push to Azure Container Registry (ACR)
+      │
+      └── Terraform Apply
+            │
+            └── Azure Container Apps
+                  ├── Managed Identity → ACR Pull
+                  ├── Key Vault integration
+                  ├── Multiple revision mode
+                  └── Auto-rollback via readiness probe
+```
+
+---
+
+## Prerequisites
+
+- Azure subscription
+- Azure Container Registry (ACR)
+- Azure Container Apps environment
+- Azure Key Vault
+- Terraform state backend (Azure Storage Account)
+- GitHub repository
+
+---
+
+## Secrets Configuration
+
+Add the following secrets to your GitHub repository under **Settings → Secrets and variables → Actions**:
+
+| Secret | Description |
+|--------|-------------|
+| `AZURE_CLIENT_ID` | Service principal / app registration client ID (used for OIDC) |
+| `AZURE_TENANT_ID` | Azure Active Directory tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `ACR_NAME` | Azure Container Registry name (e.g. `myregistry`) |
+| `ACR_LOGIN_SERVER` | ACR login server (e.g. `myregistry.azurecr.io`) |
+| `TF_STORAGE_ACCOUNT` | Storage account name for Terraform remote state |
+| `CONTAINER_APP_NAME` | Container App name (e.g. `poc-app-dev`) |
+| `RESOURCE_GROUP` | Azure resource group name |
+| `ENVIRONMENT` | Environment name (e.g. `dev`) |
+
+---
+
+## OIDC Setup
+
+This pipeline uses OpenID Connect — no Azure credentials are stored as GitHub secrets.
+
+### 1. Create an App Registration in Azure
+
+```bash
+az ad app create --display-name "github-actions-poc"
+az ad sp create --id <app-id>
+```
+
+### 2. Add Federated Credential
+
+In Azure Portal → App Registration → Certificates & secrets → Federated credentials:
+
+```
+Organisation:  <your-github-org>
+Repository:    <your-repo>
+Entity:        Branch
+Branch:        main
+```
+
+Or via CLI:
+
+```bash
+az ad app federated-credential create \
+  --id <app-id> \
+  --parameters '{
+    "name": "github-main",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:<org>/<repo>:ref:refs/heads/main",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+```
+
+### 3. Assign Roles
+
+```bash
+# Contributor on resource group
+az role assignment create \
+  --assignee <client-id> \
+  --role Contributor \
+  --scope /subscriptions/<sub-id>/resourceGroups/<rg>
+
+# User Access Administrator on ACR (needed to assign AcrPull to Container App)
+az role assignment create \
+  --assignee <client-id> \
+  --role "User Access Administrator" \
+  --scope /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ContainerRegistry/registries/<acr-name>
+```
+
+---
+
+## Terraform Variables
+
+| Variable | Description |
+|----------|-------------|
+| `image_tag` | Docker image tag (commit SHA) |
+| `revision_number` | GitHub Actions run number — used in revision name |
+| `environment` | Deployment environment (`dev`, `staging`, `prod`) |
+| `resource_group_name` | Azure resource group |
+| `acr_login_server` | ACR login server URL |
+| `min_replicas` | Minimum Container App replicas |
+| `max_replicas` | Maximum Container App replicas |
+| `container_app_cpu` | CPU allocation per replica |
+| `container_app_memory` | Memory allocation per replica |
+| `key_vault_uri` | Key Vault URI for secret injection |
+| `deployer_object_id` | Object ID of the OIDC service principal |
+
+---
+
+## Pipeline Flow
+
+```
+Checkout code
+      ↓
+Azure Login (OIDC)
+      ↓
+Terraform Init
+      ↓
+Build Docker Image
+      ↓
+Trivy Scan (CRITICAL + HIGH)
+      ↓
+Upload SARIF to GitHub Security tab
+      ↓
+Push image to ACR  ← image exists in ACR from here
+      ↓
+Terraform Apply
+  -var image_tag=<sha>
+  -var revision_number=<run_number>
+      ↓
+Verify revision health (poll 3 mins)
+      ↓
+Deactivate old revisions (keep last 2)
+      ↓
+Summary
+```
+
+---
+
+## Revision Naming
+
+Each deployment creates one revision named:
+
+```
+poc-app-dev--v<run_number>-<short_sha>
+
+Examples:
+  poc-app-dev--v5-f0af0d1
+  poc-app-dev--v6-19a86dd
+```
+
+| Part | Source | Example |
+|------|--------|---------|
+| `v5` | `github.run_number` — increments every run | `v5` |
+| `f0af0d1` | First 7 chars of `github.sha` | `f0af0d1` |
+
+---
+
+## Auto-Rollback
+
+Azure Container Apps handles rollback automatically via the **readiness probe**:
+
+```
+New revision deployed (v6-19a86dd)
+        ↓
+Readiness probe hits GET /health:3000
+        ↓
+    PASS ✅                  FAIL ❌
+        ↓                        ↓
+Traffic shifts to v6      Traffic stays on v5
+v5 kept as rollback       v6 stays in failed state
+Pipeline green ✅          Pipeline red ❌
+```
+
+### Readiness Probe Configuration
+
+```hcl
+readiness_probe {
+  transport               = "HTTP"
+  path                    = "/health"
+  port                    = 3000
+  interval_seconds        = 10
+  failure_count_threshold = 3
+  success_count_threshold = 1
+}
+```
+
+### Health Check Endpoint
+
+Your application must expose `GET /health` on port `3000` returning HTTP `200`.
+
+Example (Node.js / Express):
+
+```javascript
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+```
+
+---
+
+## Manual Rollback
+
+If you need to manually shift traffic back to the previous revision:
+
+```bash
+# List active revisions
+az containerapp revision list \
+  --name poc-app-dev \
+  --resource-group <rg> \
+  --query "[?properties.active==true].{Revision:name, Traffic:properties.trafficWeight}" \
+  -o table
+
+# Shift 100% traffic to previous revision
+az containerapp ingress traffic set \
+  --name poc-app-dev \
+  --resource-group <rg> \
+  --revision-weight poc-app-dev--v5-f0af0d1=100
+```
+
+---
+
+## Revision Retention
+
+The pipeline keeps the **last 2 active revisions**:
+
+```
+v4-abc1234  ← deactivated ✅ (older than last 2)
+v5-f0af0d1  ← kept — rollback target
+v6-19a86dd  ← kept — current, 100% traffic
+```
+
+This gives you one rollback target without accumulating idle revisions that consume resources.
+
+---
+
+## ACR Authentication
+
+The Container App uses a **System-Assigned Managed Identity** to pull images from ACR — no credentials required.
+
+```hcl
+identity {
+  type = "SystemAssigned"
+}
+
+registry {
+  server   = var.acr_login_server
+  identity = "System"
+}
+```
+
+Terraform assigns the `AcrPull` role to the Container App's identity automatically:
+
+```hcl
+resource "azurerm_role_assignment" "container_app_acr_pull" {
+  scope                = var.acr_id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app.poc.identity[0].principal_id
+}
+```
+
+---
+
+## Security Scanning
+
+Trivy scans the image before it is pushed to ACR:
+
+- **Table output** — visible in the Actions log
+- **SARIF output** — uploaded to GitHub Security tab (Code scanning alerts)
+- `exit-code: "0"` — pipeline does not fail on vulnerabilities (adjust to `"1"` to enforce blocking)
+
+To enforce blocking on CRITICAL vulnerabilities:
+
+```yaml
+- name: Trivy — Scan Image
+  uses: aquasecurity/trivy-action@master
+  with:
+    exit-code: "1"         # change from "0" to "1"
+    severity: "CRITICAL"
+```
+
+---
+
+## Project Structure
+
+```
+.
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml           # CI/CD pipeline
+├── app/
+│   ├── Dockerfile
+│   └── src/
+│       └── index.js
+└── terraform/
+    ├── environments/
+    │   └── dev/
+    │       ├── main.tf
+    │       ├── variables.tf
+    │       └── terraform.tfvars
+    └── modules/
+        ├── container_apps/
+        │   ├── main.tf
+        │   └── variables.tf
+        ├── acr/
+        └── key_vault/
+```
+
+---
+
+## Deployment Summary
+
+After each successful run, GitHub Actions posts a summary:
+
+```
+✅ Deployment Complete
+- Run:      #6
+- Commit:   19a86ddcdd4e733efdee75eea63decf827f67f76
+- Image:    myregistry.azurecr.io/azurepoc:19a86dd...
+- Revision: v6-19a86dd
+
+Active Revisions
+Revision                   Traffic  Created
+poc-app-dev--v6-19a86dd    100      2026-03-18T17:30:00
+poc-app-dev--v5-f0af0d1    0        2026-03-18T15:00:00
+```

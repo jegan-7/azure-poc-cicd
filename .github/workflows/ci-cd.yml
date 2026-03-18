@@ -181,7 +181,7 @@ jobs:
           OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
           echo "TF_VAR_deployer_object_id=$OBJECT_ID" >> $GITHUB_ENV
 
-      # ── Terraform: provision infra (use latest tag, not sha) ──────────
+      # ── Terraform Init ─────────────────────────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -193,17 +193,6 @@ jobs:
         run: |
           terraform init \
             -backend-config="storage_account_name=${{ secrets.TF_STORAGE_ACCOUNT }}"
-
-      - name: Terraform Plan (infra)
-        working-directory: terraform/environments/dev
-        run: |
-          terraform plan \
-            -var="image_tag=latest" \
-            -out=tfplan
-
-      - name: Terraform Apply (infra)
-        working-directory: terraform/environments/dev
-        run: terraform apply -auto-approve tfplan
 
       # ── Build ──────────────────────────────────────────────────────────
       - name: Build Docker Image
@@ -251,20 +240,53 @@ jobs:
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
-      # ── Deploy image (now it exists in ACR) ───────────────────────────
-      - name: Terraform Plan (image update)
+      # ── Deploy: single apply after image exists in ACR ─────────────────
+      - name: Terraform Plan
         working-directory: terraform/environments/dev
         run: |
           terraform plan \
             -var="image_tag=${{ github.sha }}" \
-            -out=tfplan-image
+            -var="revision_number=${{ github.run_number }}" \
+            -out=tfplan
 
-      - name: Terraform Apply (image update)
+      - name: Terraform Apply
         working-directory: terraform/environments/dev
-        run: terraform apply -auto-approve tfplan-image
+        run: terraform apply -auto-approve tfplan
 
-      # ── Cleanup Old Revisions ──────────────────────────────────────────
+      # ── Verify Revision Health ─────────────────────────────────────────
+      - name: Verify Revision is Healthy
+        run: |
+          REVISION="poc-app-${{ secrets.ENVIRONMENT }}--v${{ github.run_number }}-${GITHUB_SHA::7}"
+          echo "Waiting for revision $REVISION to become healthy..."
+
+          for i in {1..18}; do
+            STATUS=$(az containerapp revision show \
+              --name ${{ secrets.CONTAINER_APP_NAME }} \
+              --resource-group ${{ secrets.RESOURCE_GROUP }} \
+              --revision "$REVISION" \
+              --query "properties.runningState" -o tsv 2>/dev/null || echo "Unknown")
+
+            echo "Attempt $i/18 — Status: $STATUS"
+
+            if [ "$STATUS" = "Running" ]; then
+              echo "✅ Revision $REVISION is healthy"
+              exit 0
+            fi
+
+            if [ "$STATUS" = "Failed" ]; then
+              echo "❌ Revision $REVISION failed — Azure kept traffic on previous revision"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "❌ Revision did not become healthy within 3 minutes"
+          exit 1
+
+      # ── Cleanup Old Revisions (keep last 2) ───────────────────────────
       - name: Deactivate Old Revisions
+        if: success()
         run: |
           OLD_REVISIONS=$(az containerapp revision list \
             --name ${{ secrets.CONTAINER_APP_NAME }} \
@@ -286,15 +308,50 @@ jobs:
 
       # ── Summary ────────────────────────────────────────────────────────
       - name: Summary
+        if: always()
         run: |
-          echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Deployment Failed — Previous revision still serving traffic" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- **Run:** \`#${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Image:** \`${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Revision:** \`v${{ github.run_number }}-${GITHUB_SHA::7}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Active Revisions" >> $GITHUB_STEP_SUMMARY
           az containerapp revision list \
             --name ${{ secrets.CONTAINER_APP_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
             --query "[?properties.active==true].{Revision:name, Traffic:properties.trafficWeight, Created:properties.createdTime}" \
             -o table >> $GITHUB_STEP_SUMMARY
+# ```
+
+# ---
+
+# ## Flow
+# ```
+# Checkout
+#     ↓
+# Azure Login
+#     ↓
+# Terraform Init
+#     ↓
+# Build Image
+#     ↓
+# Scan (Trivy)
+#     ↓
+# Push to ACR          ← image exists here
+#     ↓
+# Terraform Apply      ← single apply with sha + run_number
+#     ↓
+# Deactivate old revisions
+#     ↓
+# Summary
+# ```
+
+
 # ```
 
 # ---
