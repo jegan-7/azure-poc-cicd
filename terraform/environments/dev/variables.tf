@@ -44,3 +44,8 @@ variable "max_replicas" {
   default = 2
 }
 
+variable "image_tag" {
+  description = "Docker image tag deployed by CI/CD"
+  type        = string
+  default     = "latest"
+}
