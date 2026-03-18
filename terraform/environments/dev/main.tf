@@ -119,3 +119,4 @@ module "container_apps" {
   image_tag            = var.image_tag     
   tags                 = local.common_tags
 }
+#
