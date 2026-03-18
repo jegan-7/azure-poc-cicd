@@ -102,8 +102,8 @@ resource "azurerm_container_app" "poc" {
         path      = "/health"
         port      = 3000
 
-        interval_seconds        = 5
-        failure_count_threshold = 12   # 12 × 5s = 60s max startup time
+        interval_seconds        = 10
+        failure_count_threshold = 10   # max startup time
       }
     }
   }
