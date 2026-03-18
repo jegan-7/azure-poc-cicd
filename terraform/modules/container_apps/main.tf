@@ -39,7 +39,11 @@ resource "azurerm_container_app" "poc" {
   identity {
     type = "SystemAssigned"
   }
-
+  
+  registry {
+    server   = var.acr_login_server
+    identity = "System"
+  }
   ingress {
     external_enabled = true
     target_port      = 3000
