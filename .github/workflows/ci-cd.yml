@@ -288,15 +288,19 @@ jobs:
       - name: Deactivate Old Revisions
         if: success()
         run: |
-          OLD_REVISIONS=$(az containerapp revision list \
+          ALL_REVISIONS=$(az containerapp revision list \
             --name ${{ secrets.CONTAINER_APP_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --query "sort_by([].{name:name, time:properties.createdTime}, &time) | [0:-2].name" \
+            --query "sort_by([].{name:name, time:properties.createdTime}, &time)[].name" \
             -o tsv)
 
-          if [ -z "$OLD_REVISIONS" ]; then
-            echo "No old revisions to deactivate."
+          TOTAL=$(echo "$ALL_REVISIONS" | grep -c .)
+          echo "Total active revisions: $TOTAL"
+
+          if [ "$TOTAL" -le 2 ]; then
+            echo "Only $TOTAL revision(s) — nothing to deactivate."
           else
+            OLD_REVISIONS=$(echo "$ALL_REVISIONS" | head -n -2)
             for revision in $OLD_REVISIONS; do
               echo "Deactivating: $revision"
               az containerapp revision deactivate \
