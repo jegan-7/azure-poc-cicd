@@ -34,7 +34,7 @@ resource "azurerm_container_app" "poc" {
   name                         = "poc-app-${var.environment}"
   container_app_environment_id = azurerm_container_app_environment.poc.id
   resource_group_name          = var.resource_group_name
-  revision_mode                = "Single"
+  revision_mode                = "Multiple"
 
   identity {
     type = "SystemAssigned"
