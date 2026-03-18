@@ -288,7 +288,7 @@ The output includes credentials that you must protect. Be sure that you do not i
 {
   "appId": "341f3dfd-47a8-4bdc-9957-956a2e9c3d65",
   "displayName": "github-actions-oidc-poc",
-  "password": "~fK8Q~YO0dUpwNQVcBAxdU35Xftnd4RVXGjTZboP",
+  "password": 
   "tenant": "b8869792-ee44-4a05-a4fb-b6323a34ca35"
 }
 jegan [ ~ ]$ az ad app federated-credential create \                                                                                                   --id 341f3dfd-47a8-4bdc-9957-956a2e9c3d65 \
