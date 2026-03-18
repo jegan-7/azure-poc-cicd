@@ -56,7 +56,7 @@ resource "azurerm_container_app" "poc" {
   }
 
   template {
-    revision_suffix = "v${var.image_tag}"
+    revision_suffix = "v${var.revision_number}-${substr(var.image_tag, 0, 7)}"
     min_replicas    = var.min_replicas
     max_replicas    = var.max_replicas
 

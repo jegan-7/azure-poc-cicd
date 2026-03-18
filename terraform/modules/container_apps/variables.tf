@@ -71,3 +71,8 @@ variable "acr_login_server" {
   description = "ACR login server URL"
   type        = string
 }
+
+variable "revision_number" {
+  type    = string
+  default = "1"
+}
