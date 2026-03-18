@@ -52,7 +52,7 @@ resource "azurerm_container_app" "poc" {
   }
 
   template {
-    revision_suffix = "v${var.image_tag}"   # 👈 track revisions clearly
+    revision_suffix = "v${var.image_tag}"
     min_replicas    = var.min_replicas
     max_replicas    = var.max_replicas
 
@@ -71,15 +71,47 @@ resource "azurerm_container_app" "poc" {
         name  = "NODE_ENV"
         value = var.environment
       }
+
+      # ── Readiness — gates traffic until app is ready ─────────────────
+      # Auto-rollback depends on this — if it fails, traffic stays on old revision
+      readiness_probe {
+        transport = "HTTP"
+        path      = "/health"
+        port      = 3000
+
+        
+        interval_seconds        = 10
+        failure_count_threshold = 3
+        success_count_threshold = 1
+      }
+
+      # ── Liveness — restarts container if app hangs ───────────────────
+      liveness_probe {
+        transport = "HTTP"
+        path      = "/health"
+        port      = 3000
+
+        initial_delay           = 15
+        interval_seconds        = 30
+        failure_count_threshold = 3
+      }
+
+      # ── Startup — gives app time to boot before other probes kick in ─
+      startup_probe {
+        transport = "HTTP"
+        path      = "/health"
+        port      = 3000
+
+        interval_seconds        = 5
+        failure_count_threshold = 12   # 12 × 5s = 60s max startup time
+      }
     }
   }
 
   tags = var.tags
 
   lifecycle {
-    ignore_changes = [
-       # CI/CD owns the image tag
-    ]
+    ignore_changes = []
   }
 }
 # ── RBAC: Container App → ACR (AcrPull) ───────────────────────────────────

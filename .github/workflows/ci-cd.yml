@@ -168,7 +168,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── Setup ──────────────────────────────────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -188,7 +187,7 @@ jobs:
           OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
           echo "TF_VAR_deployer_object_id=$OBJECT_ID" >> $GITHUB_ENV
 
-      # ── Terraform (infra only, no image needed) ────────────────────────
+      # ── Terraform ──────────────────────────────────────────────────────
       - name: Terraform Init
         working-directory: terraform/environments/dev
         run: |
@@ -197,7 +196,10 @@ jobs:
 
       - name: Terraform Plan
         working-directory: terraform/environments/dev
-        run: terraform plan -out=tfplan
+        run: |
+          terraform plan \
+            -var="image_tag=${{ github.sha }}" \
+            -out=tfplan
 
       - name: Terraform Apply
         working-directory: terraform/environments/dev
@@ -217,7 +219,7 @@ jobs:
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ github.sha }}"
           format: "table"
-          exit-code: "0"          # ← fail on CRITICAL/HIGH (was 0 = never fails)
+          exit-code: "0"
           severity: "CRITICAL,HIGH"
           ignore-unfixed: true
 
@@ -249,7 +251,7 @@ jobs:
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
-      # ── Deploy image via Terraform ─────────────────────────────────────
+      # ── Deploy Image ───────────────────────────────────────────────────
       - name: Terraform Plan (image update)
         working-directory: terraform/environments/dev
         run: |
@@ -261,9 +263,51 @@ jobs:
         working-directory: terraform/environments/dev
         run: terraform apply -auto-approve tfplan-image
 
+      # ── Cleanup Old Revisions (keep last 2) ────────────────────────────
+      - name: Deactivate Old Revisions
+        run: |
+          OLD_REVISIONS=$(az containerapp revision list \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --query "sort_by([].{name:name, time:properties.createdTime}, &time) | [0:-2].name" \
+            -o tsv)
+
+          if [ -z "$OLD_REVISIONS" ]; then
+            echo "No old revisions to deactivate."
+          else
+            for revision in $OLD_REVISIONS; do
+              echo "Deactivating: $revision"
+              az containerapp revision deactivate \
+                --name ${{ secrets.CONTAINER_APP_NAME }} \
+                --resource-group ${{ secrets.RESOURCE_GROUP }} \
+                --revision $revision
+            done
+          fi
+
       # ── Summary ────────────────────────────────────────────────────────
       - name: Summary
         run: |
           echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Image:** \`${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Active Revisions:**" >> $GITHUB_STEP_SUMMARY
+          az containerapp revision list \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --query "[?properties.active==true].{Revision:name, Traffic:properties.trafficWeight, Created:properties.createdTime}" \
+            -o table >> $GITHUB_STEP_SUMMARY
+# ```
+
+# ---
+
+# ## How auto-rollback works
+# ```
+# New revision deployed (--40)
+#         ↓
+# Readiness probe fails repeatedly
+#         ↓
+# Azure never shifts traffic to --40
+#         ↓
+# --39 continues serving 100% traffic  ← automatic, no action needed
+#         ↓
+# --40 stays in "failed" state
